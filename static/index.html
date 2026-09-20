@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Chatbot</title>
+<!-- Inline robot icon as the favicon (no file, no request). -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230e1430'/%3E%3Crect x='12' y='16' width='40' height='32' rx='11' fill='%23070a14' stroke='%2322d3ee' stroke-width='3'/%3E%3Ccircle cx='25' cy='32' r='4' fill='%2322d3ee'/%3E%3Ccircle cx='39' cy='32' r='4' fill='%2322d3ee'/%3E%3C/svg%3E">
+<style>
+  /* ---------- design tokens ---------- */
+  :root {
+    color-scheme: dark;
+    --void: #070a14;        /* page background */
+    --ink: #0e1430;         /* panels */
+    --ink-soft: #141c40;    /* raised surfaces */
+    --circuit: #232d5c;     /* borders and lines */
+    --cyan: #22d3ee;
+    --violet: #8b5cf6;
+    --text: #e7ecff;
+    --muted: #93a0c8;
+    --ok: #34d399;
+    --bad: #ff6b81;
+    --font-body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --font-display: "Bahnschrift", "DIN Alternate", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; color: var(--text); background: var(--void);
+    font: 15px/1.55 var(--font-body);
+    background-image:
+      radial-gradient(60rem 40rem at 8% -10%, rgba(34, 211, 238, .13), transparent 60%),
+      radial-gradient(55rem 40rem at 105% 110%, rgba(139, 92, 246, .16), transparent 60%);
+    background-attachment: fixed;
+  }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  svg.icon { width: 1.15em; height: 1.15em; flex: none; }
+
+  /* ---------- animated neural-network background ---------- */
+  #network { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  .edge { stroke: rgba(34, 211, 238, .11); stroke-width: 1; }
+  .edge.pulse { stroke: rgba(139, 92, 246, .75); stroke-width: 1.4; stroke-dasharray: 5 70; animation: flow 6s linear infinite; }
+  .node { fill: var(--cyan); opacity: .35; animation: twinkle 4.5s ease-in-out infinite; }
+  @keyframes flow { to { stroke-dashoffset: -150; } }
+  @keyframes twinkle { 50% { opacity: .9; } }
+
+  /* ---------- layout ---------- */
+  .app { position: relative; z-index: 1; max-width: 880px; height: 100dvh; margin: 0 auto; padding: 16px;
+         display: flex; flex-direction: column; gap: 12px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand .logo { width: 40px; height: 40px; border-radius: 12px; background: var(--ink);
+                 border: 1px solid var(--circuit); display: grid; place-items: center;
+                 box-shadow: 0 0 18px rgba(34, 211, 238, .25); }
+  .brand .logo svg { width: 28px; height: 28px; }
+  h1 { margin: 0; font: 600 21px/1.1 var(--font-display); letter-spacing: .01em; }
+  .brand small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
+          background: rgba(14, 20, 48, .8); border: 1px solid var(--circuit); color: var(--muted); font-size: 13px; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.ok .dot { background: var(--ok); box-shadow: 0 0 0 0 rgba(52, 211, 153, .6); animation: ping 2.4s ease-out infinite; }
+  .pill.bad .dot { background: var(--bad); }
+  .pill.ok b { color: var(--ok); } .pill.bad b { color: var(--bad); }
+  @keyframes ping { 70%, 100% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); } }
+
+  /* ---------- controls ---------- */
+  .bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-radius: 16px;
+         background: rgba(14, 20, 48, .72); border: 1px solid var(--circuit); backdrop-filter: blur(10px); }
+  .bar .grow { flex: 1; min-width: 100px; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 12px;
+         color: var(--text); background: var(--ink-soft); border: 1px solid var(--circuit); cursor: pointer;
+         transition: border-color .15s, box-shadow .15s, transform .15s; }
+  .btn:hover:not(:disabled):not(.is-disabled) { border-color: var(--cyan); box-shadow: 0 0 14px rgba(34, 211, 238, .25); }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled, .btn.is-disabled { opacity: .45; cursor: not-allowed; }
+  .btn:focus-within { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* ---------- chat log ---------- */
+  #log { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px;
+         border-radius: 20px; background: rgba(9, 13, 32, .66); border: 1px solid var(--circuit); backdrop-filter: blur(10px);
+         scrollbar-color: var(--circuit) transparent; }
+  .row { display: flex; gap: 10px; align-items: flex-end; max-width: 92%; }
+  .row.user { align-self: flex-end; flex-direction: row-reverse; }
+  .row.bot { align-self: flex-start; }
+  .avatar { width: 36px; height: 36px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--ink);
+            border: 1px solid var(--circuit); }
+  .row.bot .avatar { box-shadow: 0 0 14px rgba(34, 211, 238, .3); border-color: rgba(34, 211, 238, .55); }
+  .row.user .avatar { border-color: rgba(139, 92, 246, .6); color: #c4b5fd; }
+  .avatar svg { width: 24px; height: 24px; }
+  .msg { padding: 10px 14px; border-radius: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.bot { background: var(--ink-soft); border: 1px solid var(--circuit); border-bottom-left-radius: 5px; }
+  .msg.user { background: linear-gradient(135deg, rgba(34, 211, 238, .2), rgba(139, 92, 246, .3));
+              border: 1px solid rgba(139, 92, 246, .45); border-bottom-right-radius: 5px; }
+  .msg.system { align-self: center; padding: 3px 12px; border-radius: 999px; color: var(--muted); font-size: 13px;
+                background: rgba(20, 28, 64, .7); border: 1px solid var(--circuit); text-align: center; }
+  .msg.error { align-self: center; padding: 8px 14px; color: var(--bad); font-size: 14px; text-align: center;
+               background: rgba(255, 107, 129, .08); border: 1px solid rgba(255, 107, 129, .35); }
+
+  /* sources shown under an answer */
+  .sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; white-space: normal; }
+  .sources-label { color: var(--muted); font-size: 12.5px; margin-right: 2px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12.5px;
+          color: #a5f3fc; background: rgba(34, 211, 238, .09); border: 1px solid rgba(34, 211, 238, .35); }
+
+  /* the excerpts of the document behind an answer */
+  .matches { margin-top: 10px; white-space: normal; }
+  .matches summary { cursor: pointer; width: fit-content; padding: 2px 0; color: var(--muted); font-size: 13px; }
+  .matches summary:hover { color: var(--text); }
+  .passage { margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--cyan); border-radius: 4px 10px 10px 4px;
+             background: rgba(7, 10, 20, .55); }
+  .passage-head { margin-bottom: 4px; color: #a5f3fc; font-size: 12.5px; }
+  .passage-text { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  /* typing dots */
+  .typing { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+  .typing .dots { display: inline-flex; gap: 5px; }
+  .typing .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); animation: bounce 1.2s ease-in-out infinite; }
+  .typing .dots i:nth-child(2) { animation-delay: .15s; background: #62b6f6; }
+  .typing .dots i:nth-child(3) { animation-delay: .3s; background: var(--violet); }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-6px); opacity: 1; } }
+
+  /* ---------- paste-text dialog ---------- */
+  dialog { width: min(640px, calc(100vw - 24px)); padding: 20px; color: var(--text); background: var(--ink);
+           border: 1px solid var(--circuit); border-radius: 20px; box-shadow: 0 0 44px rgba(34, 211, 238, .18); }
+  dialog::backdrop { background: rgba(4, 6, 16, .72); backdrop-filter: blur(3px); }
+  dialog h2 { margin: 0 0 4px; font: 600 20px/1.2 var(--font-display); }
+  dialog p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+  textarea { display: block; width: 100%; min-height: 220px; resize: vertical; padding: 12px; font: inherit; color: var(--text);
+             background: var(--void); border: 1px solid var(--circuit); border-radius: 12px; outline: 0;
+             transition: border-color .2s, box-shadow .2s; }
+  textarea:focus { border-color: var(--cyan); box-shadow: 0 0 18px rgba(34, 211, 238, .2); }
+  textarea::placeholder { color: #6b7799; }
+  .paste-foot { display: flex; justify-content: space-between; gap: 12px; margin: 8px 2px 14px; font-size: 13px; color: var(--muted); }
+  #paste-error { color: var(--bad); text-align: right; }
+  .paste-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+  /* ---------- welcome screen ---------- */
+  #welcome { margin: auto; max-width: 460px; text-align: center; padding: 8px 4px; }
+  #welcome[hidden] { display: none; }
+  .mascot-wrap { position: relative; width: 190px; height: 200px; margin: 0 auto 6px; }
+  .mascot-wrap::before { content: ""; position: absolute; inset: 14px 8px 30px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(34, 211, 238, .38), rgba(139, 92, 246, .2) 55%, transparent 72%);
+        filter: blur(14px); animation: breathe 5s ease-in-out infinite; }
+  .mascot { position: relative; width: 100%; height: 100%; animation: float 5s ease-in-out infinite; }
+  .mascot .eye { transform-box: fill-box; transform-origin: center; animation: blink 6s infinite; }
+  .mascot .antenna-tip { animation: breathe 2s ease-in-out infinite; }
+  .mascot .chest { animation: breathe 2.6s ease-in-out infinite; }
+  .mascot .shadow { transform-box: fill-box; transform-origin: center; animation: shadow 5s ease-in-out infinite; }
+  @keyframes float { 50% { transform: translateY(-12px); } }
+  @keyframes shadow { 50% { transform: scaleX(.82); opacity: .35; } }
+  @keyframes breathe { 50% { opacity: .55; } }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.08); } }
+  #welcome h2 { margin: 6px 0 6px; font: 600 clamp(26px, 5vw, 34px)/1.1 var(--font-display); letter-spacing: .005em; }
+  #welcome p { margin: 0 auto; max-width: 400px; color: var(--muted); }
+  #welcome .private { margin-top: 14px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #a5f3fc; }
+
+  /* ---------- input ---------- */
+  #form { display: flex; gap: 10px; padding: 8px; border-radius: 18px; background: rgba(14, 20, 48, .82);
+         border: 1px solid var(--circuit); backdrop-filter: blur(10px); transition: border-color .2s, box-shadow .2s; }
+  #form:focus-within { border-color: var(--cyan); box-shadow: 0 0 22px rgba(34, 211, 238, .22); }
+  input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 10px 12px; color: var(--text); background: transparent; border: 0; outline: 0; }
+  input[type=text]::placeholder { color: #6b7799; }
+  .send { font-weight: 600; color: #04121a; border: 0; background: linear-gradient(135deg, var(--cyan), var(--violet)); }
+  .send:hover:not(:disabled) { box-shadow: 0 0 20px rgba(139, 92, 246, .5); }
+
+  @media (max-width: 560px) {
+    .app { padding: 10px; gap: 10px; }
+    .bar .grow { display: none; }
+    .brand small { display: none; }
+    .row { max-width: 100%; }
+    .mascot-wrap { width: 150px; height: 158px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Shared icons and gradients (hidden). Everything is drawn here: no image files, no downloads. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="grad-brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="grad-head" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2552"/><stop offset="1" stop-color="#0c1230"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <symbol id="ico-bot" viewBox="0 0 64 64">
+    <line x1="32" y1="14" x2="32" y2="8" stroke="url(#grad-brand)" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="32" cy="6" r="3.2" fill="#22d3ee"/>
+    <rect x="5" y="27" width="5" height="10" rx="2.5" fill="#8b5cf6"/><rect x="54" y="27" width="5" height="10" rx="2.5" fill="#8b5cf6"/>
+    <rect x="10" y="14" width="44" height="36" rx="12" fill="url(#grad-head)" stroke="url(#grad-brand)" stroke-width="2.5"/>
+    <rect x="16" y="22" width="32" height="20" rx="8" fill="#050816"/>
+    <circle cx="26" cy="32" r="3.4" fill="#22d3ee"/><circle cx="38" cy="32" r="3.4" fill="#22d3ee"/>
+    <rect x="23" y="53" width="18" height="7" rx="3.5" fill="url(#grad-brand)"/>
+  </symbol>
+  <symbol id="ico-user" viewBox="0 0 24 24">
+    <circle cx="12" cy="8" r="4" fill="currentColor"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7z" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-send" viewBox="0 0 24 24">
+    <path d="M3 11.5 21 3l-6.5 18-3.2-7.3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-upload" viewBox="0 0 24 24">
+    <path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-doc" viewBox="0 0 24 24">
+    <path d="M6 3h8l4 4v14H6z M14 3v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-plus" viewBox="0 0 24 24">
+    <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-paste" viewBox="0 0 24 24">
+    <rect x="5" y="4" width="14" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M9 4V3h6v1M8.5 11h7M8.5 15h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-lock" viewBox="0 0 24 24">
+    <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/>
+  </symbol>
+</svg>
+
+<!-- Slow, quiet neural-network backdrop (nodes and links are generated by the script below). -->
+<svg id="network" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg>
+
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="logo"><svg aria-hidden="true"><use href="#ico-bot"/></svg></div>
+      <div>
+        <h1>Local Chatbot</h1>
+        <small>Your documents and data stay on this computer</small>
+      </div>
+    </div>
+    <div class="pill" id="status">checking Ollama…</div>
+  </header>
+
+  <div class="bar">
+    <label class="btn" id="upload-btn">
+      <svg class="icon" aria-hidden="true"><use href="#ico-upload"/></svg>
+      Upload PDF / TXT
+      <input type="file" id="file" class="sr-only" accept=".pdf,.txt">
+    </label>
+    <button type="button" class="btn" id="paste-btn">
+      <svg class="icon" aria-hidden="true"><use href="#ico-paste"/></svg>
+      Paste text
+    </button>
+    <span class="grow" id="session-info">starting session…</span>
+    <button type="button" class="btn" id="new-session">
+      <svg class="icon" aria-hidden="true"><use href="#ico-plus"/></svg>
+      New session
+    </button>
+  </div>
+
+  <div id="log" aria-live="polite">
+    <section id="welcome">
+      <div class="mascot-wrap">
+        <!-- The mascot: floats, blinks, and its antenna and chest light pulse. -->
+        <svg class="mascot" viewBox="0 0 200 200" aria-hidden="true">
+          <ellipse class="shadow" cx="100" cy="192" rx="42" ry="6" fill="#22d3ee" opacity=".28"/>
+          <line x1="100" y1="46" x2="100" y2="26" stroke="url(#grad-brand)" stroke-width="4" stroke-linecap="round"/>
+          <circle class="antenna-tip" cx="100" cy="20" r="8" fill="#22d3ee" filter="url(#glow)"/>
+          <rect x="30" y="80" width="14" height="34" rx="7" fill="#8b5cf6"/>
+          <rect x="156" y="80" width="14" height="34" rx="7" fill="#8b5cf6"/>
+          <rect x="42" y="46" width="116" height="94" rx="32" fill="url(#grad-head)" stroke="url(#grad-brand)" stroke-width="4"/>
+          <rect x="56" y="62" width="88" height="56" rx="22" fill="#050816"/>
+          <ellipse class="eye" cx="80" cy="88" rx="9" ry="12" fill="#22d3ee" filter="url(#glow)"/>
+          <ellipse class="eye" cx="120" cy="88" rx="9" ry="12" fill="#22d3ee" filter="url(#glow)"/>
+          <path d="M88 106q12 9 24 0" fill="none" stroke="#22d3ee" stroke-width="3.5" stroke-linecap="round"/>
+          <rect x="66" y="146" width="68" height="38" rx="18" fill="url(#grad-head)" stroke="url(#grad-brand)" stroke-width="3"/>
+          <circle class="chest" cx="100" cy="165" r="6" fill="#8b5cf6" filter="url(#glow)"/>
+        </svg>
+      </div>
+      <h2 id="welcome-title">Ask your documents</h2>
+      <p id="welcome-text">Upload a PDF or TXT file, or paste some text, then ask a question in plain English. Answers come from your text, with the page they were found on.</p>
+      <div class="private"><svg class="icon" aria-hidden="true"><use href="#ico-lock"/></svg> Runs fully offline with TinyLlama</div>
+    </section>
+  </div>
+
+  <form id="form">
+    <input type="text" id="question" maxlength="1000" autocomplete="off" placeholder="Ask about your documents…" aria-label="Your question" required>
+    <button class="btn send" id="send" type="submit">
+      <svg class="icon" aria-hidden="true"><use href="#ico-send"/></svg>
+      Send
+    </button>
+  </form>
+</div>
+
+<dialog id="paste-dialog" aria-labelledby="paste-title">
+  <form id="paste-form">
+    <h2 id="paste-title">Paste text</h2>
+    <p>Paste any text, then ask questions about it. It is kept only in this session.</p>
+    <textarea id="paste-text" placeholder="Paste your text here…" aria-label="Text to add"></textarea>
+    <div class="paste-foot">
+      <span id="paste-count">0 characters</span>
+      <span id="paste-error" role="alert"></span>
+    </div>
+    <div class="paste-actions">
+      <button type="button" class="btn" id="paste-cancel">Cancel</button>
+      <button type="submit" class="btn send" id="paste-add">Add text</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  let sessionId = null;
+  let busy = false;
+
+  // ---- small helpers -------------------------------------------------------
+  // Everything from the server is added with textContent (never innerHTML),
+  // so document text or model output can't inject HTML/JS into the page.
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function icon(name, className) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", className || "icon");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", "#" + name);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function avatar(kind) {
+    const wrap = el("div", "avatar");
+    wrap.appendChild(icon(kind === "user" ? "ico-user" : "ico-bot", ""));
+    return wrap;
+  }
+
+  function scrollToEnd() { $("log").scrollTop = $("log").scrollHeight; }
+
+  function hideWelcome() { $("welcome").hidden = true; }
+
+  // "system" and "error" are centred notes; "user" and "bot" are chat bubbles with an avatar.
+  // Returns the element that holds the text, so callers can add sources or tables to it.
+  function addMessage(kind, text) {
+    hideWelcome();
+    if (kind === "system" || kind === "error") {
+      const note = el("div", "msg " + kind, text);
+      $("log").appendChild(note);
+      scrollToEnd();
+      return note;
+    }
+    const row = el("div", "row " + kind);
+    const bubble = el("div", "msg " + kind, text);
+    row.append(avatar(kind), bubble);
+    $("log").appendChild(row);
+    scrollToEnd();
+    return bubble;
+  }
+
+  // Bouncing dots shown while TinyLlama works. Remove the returned row when done.
+  function showTyping() {
+    hideWelcome();
+    const row = el("div", "row bot");
+    const bubble = el("div", "msg bot");
+    bubble.setAttribute("role", "status");
+    const typing = el("span", "typing");
+    const dots = el("span", "dots");
+    dots.append(el("i"), el("i"), el("i"));
+    typing.append(dots, el("span", "", "Thinking…"));
+    bubble.appendChild(typing);
+    row.append(avatar("bot"), bubble);
+    $("log").appendChild(row);
+    scrollToEnd();
+    return row;
+  }
+
+  async function api(path, options) {
+    const response = await fetch(path, options);
+    let data = null;
+    try { data = await response.json(); } catch (e) { /* not JSON */ }
+    if (!response.ok) {
+      let message = (data && data.detail) || "Request failed (" + response.status + ")";
+      // A plain "Not Found" means the server has no such address at all (an older version is still running).
+      if (response.status === 404 && message === "Not Found") {
+        message = "The running server is an older version and doesn't support this yet. " +
+                  "Stop it (Ctrl+C), start it again, then reload this page.";
+      }
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  // True only when the server says OUR session is unknown (not for any other 404).
+  function sessionGone(error) {
+    return error.status === 404 && /unknown session/i.test(error.message);
+  }
+
+  function setBusy(value) {
+    busy = value;
+    $("send").disabled = value;
+    $("file").disabled = value;
+    $("upload-btn").classList.toggle("is-disabled", value);
+    // Starting a new session while an answer is on its way would mix things up.
+    $("new-session").disabled = value;
+    $("paste-btn").disabled = value;
+    $("paste-add").disabled = value;
+  }
+
+  // ---- background: a quiet neural network ----------------------------------
+  function buildNetwork() {
+    const svg = $("network");
+    let seed = 11; // fixed seed: the same pattern every time
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const make = (tag, attrs) => {
+      const node = document.createElementNS(SVG_NS, tag);
+      for (const key in attrs) node.setAttribute(key, attrs[key]);
+      return node;
+    };
+    const nodes = Array.from({ length: 46 }, () => ({ x: rand() * 1200, y: rand() * 800 }));
+    let count = 0;
+    nodes.forEach((a, i) => nodes.slice(i + 1).forEach((b) => {
+      if (Math.hypot(a.x - b.x, a.y - b.y) > 170) return;
+      const line = make("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: count++ % 5 === 0 ? "edge pulse" : "edge" });
+      line.style.animationDelay = (-rand() * 6) + "s";
+      svg.appendChild(line);
+    }));
+    nodes.forEach((n) => {
+      const dot = make("circle", { cx: n.x, cy: n.y, r: (2 + rand() * 2.4).toFixed(1), class: "node" });
+      dot.style.animationDelay = (-rand() * 4.5) + "s";
+      svg.appendChild(dot);
+    });
+  }
+
+  // ---- session -------------------------------------------------------------
+  // Back to the welcome screen: remove every message and show the robot again.
+  function resetChat() {
+    Array.from($("log").children).forEach((child) => { if (child.id !== "welcome") child.remove(); });
+    $("welcome").hidden = false;
+    $("log").scrollTop = 0;
+    $("question").focus();
+  }
+
+  function showSession() {
+    $("session-info").textContent = "session " + sessionId.slice(0, 8) + "…";
+  }
+
+  async function newSession(announce) {
+    const data = await api("/session", { method: "POST" });
+    sessionId = data.session_id;
+    try { sessionStorage.setItem("sessionId", sessionId); } catch (e) { /* storage blocked */ }
+    showSession();
+    if (announce) resetChat(); // the "New session" button: start again from the welcome screen
+  }
+
+  async function ensureSession() {
+    let saved = null;
+    try { saved = sessionStorage.getItem("sessionId"); } catch (e) { /* ignore */ }
+    if (saved) { sessionId = saved; showSession(); }
+    else await newSession(false);
+  }
+
+  // The server forgot our session (e.g. it was cleaned up): start a fresh one.
+  async function recoverFromMissingSession() {
+    await newSession(false);
+    addMessage("error", "Your session had expired, so a new one was started. Please upload your document again.");
+  }
+
+  // ---- health --------------------------------------------------------------
+  async function refreshHealth() {
+    const pill = $("status");
+    try {
+      const h = await api("/health");
+      pill.className = "pill " + (h.ollama ? "ok" : "bad");
+      pill.textContent = "";
+      pill.append(el("span", "dot"), "Ollama (" + h.model + "): ", el("b", "", h.ollama ? "online" : "offline"));
+    } catch (e) {
+      pill.className = "pill bad";
+      pill.textContent = "server unreachable";
+    }
+  }
+
+  // ---- upload --------------------------------------------------------------
+  $("file").addEventListener("change", async () => {
+    const file = $("file").files[0];
+    $("file").value = "";
+    if (!file || busy) return;
+    setBusy(true);
+    addMessage("system", "Uploading " + file.name + "…");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const data = await api("/upload/" + sessionId, { method: "POST", body });
+      addMessage("system", data.message + " (" + data.chunks + " chunks)");
+    } catch (e) {
+      if (sessionGone(e)) await recoverFromMissingSession();
+      else addMessage("error", e.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  // ---- paste text ----------------------------------------------------------
+  function updatePasteCount() {
+    $("paste-count").textContent = $("paste-text").value.length.toLocaleString() + " characters";
+  }
+
+  $("paste-btn").addEventListener("click", () => {
+    $("paste-error").textContent = "";
+    $("paste-dialog").showModal();
+    $("paste-text").focus();
+  });
+  $("paste-cancel").addEventListener("click", () => $("paste-dialog").close());
+  $("paste-text").addEventListener("input", updatePasteCount);
+  $("paste-text").addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") $("paste-form").requestSubmit();
+  });
+
+  $("paste-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = $("paste-text").value;
+    if (!text.trim()) { $("paste-error").textContent = "Paste some text first."; return; }
+    if (busy) return;
+    $("paste-error").textContent = "";
+    setBusy(true);
+    try {
+      const data = await api("/paste/" + sessionId, jsonPost({ text }));
+      $("paste-dialog").close();
+      $("paste-text").value = "";
+      updatePasteCount();
+      addMessage("system", data.message + " (" + data.chunks + " chunks)");
+      $("question").focus();
+    } catch (e) {
+      if (sessionGone(e)) { $("paste-dialog").close(); await recoverFromMissingSession(); }
+      else $("paste-error").textContent = e.message; // keep the dialog open so the text is not lost
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  // ---- chat ----------------------------------------------------------------
+  function renderSources(container, sources) {
+    if (!sources || !sources.length) return;
+    const wrap = el("div", "sources");
+    wrap.appendChild(el("span", "sources-label", "Sources"));
+    sources.forEach((s) => {
+      const chip = el("span", "chip");
+      chip.append(icon("ico-doc"), s.file + (s.page ? ", page " + s.page : ""));
+      wrap.appendChild(chip);
+    });
+    container.appendChild(wrap);
+  }
+
+  // The excerpts of the document that matched. Closed under a normal answer ("Show matching
+  // text"); open when the model found no answer, so the user always sees something to read.
+  function renderPassages(container, passages, open) {
+    if (!passages || !passages.length) return;
+    const details = el("details", "matches");
+    details.open = open;
+    const label = open ? "Related text from your document" : "Show matching text";
+    details.appendChild(el("summary", "", label + " (" + passages.length + ")"));
+    passages.forEach((passage) => {
+      const box = el("div", "passage");
+      box.appendChild(el("div", "passage-head", passage.file + (passage.page ? ", page " + passage.page : "")));
+      box.appendChild(el("div", "passage-text", passage.text));
+      details.appendChild(box);
+    });
+    container.appendChild(details);
+  }
+
+  function jsonPost(payload) {
+    return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+  }
+
+  $("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const question = $("question").value.trim();
+    if (!question || busy) return;
+    $("question").value = "";
+    addMessage("user", question);
+    setBusy(true);
+    const typing = showTyping();
+    try {
+      const data = await api("/chat", jsonPost({ session_id: sessionId, question }));
+      typing.remove();
+      const bubble = addMessage("bot", data.answer);
+      const answered = data.answered !== false;
+      if (answered) renderSources(bubble, data.sources); // the excerpts below carry their own file and page
+      renderPassages(bubble, data.passages, !answered);
+      scrollToEnd();
+    } catch (e) {
+      typing.remove();
+      if (sessionGone(e)) await recoverFromMissingSession();
+      else addMessage("error", e.message);
+    } finally {
+      setBusy(false);
+      $("question").focus();
+    }
+  });
+
+  // ---- new session button --------------------------------------------------
+  $("new-session").addEventListener("click", () => newSession(true).catch((e) => addMessage("error", e.message)));
+
+  // ---- start ---------------------------------------------------------------
+  buildNetwork();
+  ensureSession().catch((e) => addMessage("error", "Could not start a session: " + e.message));
+  refreshHealth();
+  setInterval(refreshHealth, 15000);
+</script>
+</body>
+</html>

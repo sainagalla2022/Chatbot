@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd ~/Chatbot && echo \"=== ask\\(\\) as it is now ===\" && sed -n '/^def ask\\(/,$p' app/rag.py && echo && echo \"=== endpoints in main.py ===\" && grep -n -E '^@app\\\\.\\(get|post\\)|^def \\(health|create_session|upload|paste|chat|sql\\)' app/main.py && echo && echo \"=== file sizes \\(lines\\) ===\" && wc -l app/*.py | tail -8)"
+    ]
+  }
+}
